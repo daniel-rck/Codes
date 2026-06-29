@@ -1,18 +1,39 @@
 import { type DBSchema, type IDBPDatabase, openDB } from "idb";
 
-// Replace this interface with your app's schema. Each store gets a
-// `key`/`value` shape and (optionally) named indexes.
+/** A barcode/QR code read by the scanner. */
+export type ScanEntry = {
+  id: string;
+  text: string;
+  format: string;
+  createdAt: number;
+};
+
+/** A barcode/QR code created by the generator. */
+export type GeneratedEntry = {
+  id: string;
+  /** "QRCode" or any zxing format name. */
+  format: string;
+  /** The encoded content string. */
+  content: string;
+  /** Optional human label (e.g. content type or a short preview). */
+  label?: string;
+  createdAt: number;
+};
+
 export interface AppSchema extends DBSchema {
-  // Example:
-  // tenants: {
-  //   key: string;
-  //   value: { id: string; name: string; createdAt: number };
-  //   indexes: { byName: string };
-  // };
-  [storeName: string]: { key: IDBValidKey; value: unknown };
+  scans: {
+    key: string;
+    value: ScanEntry;
+    indexes: { byCreatedAt: number };
+  };
+  generated: {
+    key: string;
+    value: GeneratedEntry;
+    indexes: { byCreatedAt: number };
+  };
 }
 
-const DB_NAME = "app";
+const DB_NAME = "codes";
 const DB_VERSION = 1;
 
 let dbPromise: Promise<IDBPDatabase<AppSchema>> | null = null;
@@ -20,13 +41,15 @@ let dbPromise: Promise<IDBPDatabase<AppSchema>> | null = null;
 export function getDB(): Promise<IDBPDatabase<AppSchema>> {
   if (!dbPromise) {
     dbPromise = openDB<AppSchema>(DB_NAME, DB_VERSION, {
-      upgrade(db, _oldVersion, _newVersion, _tx) {
-        // Create stores and indexes here. Example:
-        // if (!db.objectStoreNames.contains("tenants")) {
-        //   const store = db.createObjectStore("tenants", { keyPath: "id" });
-        //   store.createIndex("byName", "name");
-        // }
-        void db;
+      upgrade(db) {
+        if (!db.objectStoreNames.contains("scans")) {
+          const scans = db.createObjectStore("scans", { keyPath: "id" });
+          scans.createIndex("byCreatedAt", "createdAt");
+        }
+        if (!db.objectStoreNames.contains("generated")) {
+          const generated = db.createObjectStore("generated", { keyPath: "id" });
+          generated.createIndex("byCreatedAt", "createdAt");
+        }
       },
     });
   }
