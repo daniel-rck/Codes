@@ -2,6 +2,11 @@
  * QR Code module matrix: function patterns, data placement, data masking and
  * format/version information (ISO/IEC 18004). Consumes the codeword stream from
  * `encode.ts` and produces a boolean matrix (`true` = dark module).
+ *
+ * Internally the builder works on flat `Uint8Array` grids (row-major,
+ * `y * size + x`) — mask evaluation makes ~16 full-grid passes per encode, and
+ * flat typed arrays keep that cache-friendly. The public result stays
+ * `boolean[][]`.
  */
 import { type EccLevel, type EncodeResult, encodeQr } from "./encode.ts";
 
@@ -28,25 +33,24 @@ function getBit(value: number, index: number): boolean {
 
 class MatrixBuilder {
   readonly size: number;
-  readonly modules: boolean[][];
-  private readonly isFunction: boolean[][];
+  /** Flat row-major grid; 1 = dark. */
+  private readonly grid: Uint8Array;
+  /** Flat row-major grid; 1 = function module (not maskable). */
+  private readonly func: Uint8Array;
 
   constructor(
     private readonly version: number,
     private readonly ecc: EccLevel,
   ) {
     this.size = version * 4 + 17;
-    this.modules = Array.from({ length: this.size }, () =>
-      new Array<boolean>(this.size).fill(false),
-    );
-    this.isFunction = Array.from({ length: this.size }, () =>
-      new Array<boolean>(this.size).fill(false),
-    );
+    this.grid = new Uint8Array(this.size * this.size);
+    this.func = new Uint8Array(this.size * this.size);
   }
 
   private set(x: number, y: number, dark: boolean): void {
-    (this.modules[y] as boolean[])[x] = dark;
-    (this.isFunction[y] as boolean[])[x] = true;
+    const i = y * this.size + x;
+    this.grid[i] = dark ? 1 : 0;
+    this.func[i] = 1;
   }
 
   private alignmentPositions(): number[] {
@@ -146,8 +150,9 @@ class MatrixBuilder {
           const x = right - j;
           const upward = ((right + 1) & 2) === 0;
           const y = upward ? this.size - 1 - vert : vert;
-          if (!(this.isFunction[y] as boolean[])[x] && i < totalBits) {
-            (this.modules[y] as boolean[])[x] = getBit(data[i >>> 3] as number, 7 - (i & 7));
+          const idx = y * this.size + x;
+          if (!this.func[idx] && i < totalBits) {
+            this.grid[idx] = getBit(data[i >>> 3] as number, 7 - (i & 7)) ? 1 : 0;
             i++;
           }
         }
@@ -180,9 +185,10 @@ class MatrixBuilder {
 
   applyMask(mask: number): void {
     for (let y = 0; y < this.size; y++) {
+      const row = y * this.size;
       for (let x = 0; x < this.size; x++) {
-        if (!(this.isFunction[y] as boolean[])[x] && this.maskInvert(mask, x, y)) {
-          (this.modules[y] as boolean[])[x] = !(this.modules[y] as boolean[])[x];
+        if (!this.func[row + x] && this.maskInvert(mask, x, y)) {
+          this.grid[row + x] = this.grid[row + x] ? 0 : 1;
         }
       }
     }
@@ -210,7 +216,7 @@ class MatrixBuilder {
   }
 
   private finderPenaltyTerminate(
-    currentRunColor: boolean,
+    currentRunColor: number,
     currentRunLength: number,
     runHistory: number[],
   ): number {
@@ -227,21 +233,23 @@ class MatrixBuilder {
   getPenaltyScore(): number {
     let result = 0;
     const size = this.size;
+    const grid = this.grid;
 
     // Rows.
     for (let y = 0; y < size; y++) {
-      let runColor = false;
+      const row = y * size;
+      let runColor = 0;
       let runX = 0;
       const runHistory = [0, 0, 0, 0, 0, 0, 0];
       for (let x = 0; x < size; x++) {
-        if ((this.modules[y] as boolean[])[x] === runColor) {
+        if (grid[row + x] === runColor) {
           runX++;
           if (runX === 5) result += PENALTY_N1;
           else if (runX > 5) result++;
         } else {
           this.finderPenaltyAddHistory(runX, runHistory);
           if (!runColor) result += this.finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
-          runColor = (this.modules[y] as boolean[])[x] as boolean;
+          runColor = grid[row + x] as number;
           runX = 1;
         }
       }
@@ -249,18 +257,18 @@ class MatrixBuilder {
     }
     // Columns.
     for (let x = 0; x < size; x++) {
-      let runColor = false;
+      let runColor = 0;
       let runY = 0;
       const runHistory = [0, 0, 0, 0, 0, 0, 0];
       for (let y = 0; y < size; y++) {
-        if ((this.modules[y] as boolean[])[x] === runColor) {
+        if (grid[y * size + x] === runColor) {
           runY++;
           if (runY === 5) result += PENALTY_N1;
           else if (runY > 5) result++;
         } else {
           this.finderPenaltyAddHistory(runY, runHistory);
           if (!runColor) result += this.finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
-          runColor = (this.modules[y] as boolean[])[x] as boolean;
+          runColor = grid[y * size + x] as number;
           runY = 1;
         }
       }
@@ -268,12 +276,13 @@ class MatrixBuilder {
     }
     // 2x2 blocks of one color.
     for (let y = 0; y < size - 1; y++) {
+      const row = y * size;
       for (let x = 0; x < size - 1; x++) {
-        const c = (this.modules[y] as boolean[])[x];
+        const c = grid[row + x];
         if (
-          c === (this.modules[y] as boolean[])[x + 1] &&
-          c === (this.modules[y + 1] as boolean[])[x] &&
-          c === (this.modules[y + 1] as boolean[])[x + 1]
+          c === grid[row + x + 1] &&
+          c === grid[row + size + x] &&
+          c === grid[row + size + x + 1]
         ) {
           result += PENALTY_N2;
         }
@@ -281,13 +290,23 @@ class MatrixBuilder {
     }
     // Balance of dark vs light modules.
     let dark = 0;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) if ((this.modules[y] as boolean[])[x]) dark++;
-    }
+    for (let i = 0; i < grid.length; i++) if (grid[i]) dark++;
     const total = size * size;
     const k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1;
     result += k * PENALTY_N4;
     return result;
+  }
+
+  /** Materialise the flat grid as the public boolean[][] shape. */
+  toModules(): boolean[][] {
+    const modules: boolean[][] = [];
+    for (let y = 0; y < this.size; y++) {
+      const row = new Array<boolean>(this.size);
+      const base = y * this.size;
+      for (let x = 0; x < this.size; x++) row[x] = this.grid[base + x] === 1;
+      modules.push(row);
+    }
+    return modules;
   }
 }
 
@@ -314,7 +333,7 @@ export function buildMatrix(result: EncodeResult): QrMatrix {
 
   return {
     size: builder.size,
-    modules: builder.modules,
+    modules: builder.toModules(),
     version: result.version,
     ecc: result.ecc,
     mask: bestMask,

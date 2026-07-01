@@ -6,7 +6,6 @@
  * origin (no CDN fetch) so the service worker can precache it for offline use.
  */
 import {
-  CREATABLE_BARCODE_FORMATS,
   type CreatableBarcodeFormat,
   formatToLabel,
   prepareZXingModule,
@@ -21,9 +20,15 @@ import {
 import wasmUrl from "zxing-wasm/full/zxing_full.wasm?url";
 
 export type { CreatableBarcodeFormat, ReaderOptions, ReadResult, WriteResult, WriterOptions };
-export { CREATABLE_BARCODE_FORMATS, formatToLabel };
+export { formatToLabel };
 
 let prepared = false;
+
+// Stable object identity: prepareZXingModule shallow-compares overrides to
+// decide whether the cached module promise can be reused.
+const OVERRIDES = {
+  locateFile: (path: string, prefix: string) => (path.endsWith(".wasm") ? wasmUrl : prefix + path),
+};
 
 /**
  * Point the Emscripten loader at our locally-hosted `.wasm` instead of the
@@ -32,13 +37,17 @@ let prepared = false;
 export function ensureZXingModule(): void {
   if (prepared) return;
   prepared = true;
-  prepareZXingModule({
-    overrides: {
-      locateFile: (path: string, prefix: string) =>
-        path.endsWith(".wasm") ? wasmUrl : prefix + path,
-    },
-    fireImmediately: false,
-  });
+  prepareZXingModule({ overrides: OVERRIDES, fireImmediately: false });
+}
+
+/**
+ * Eagerly fetch + compile the wasm so the first real read/write doesn't pay
+ * the cold start. Each realm (main thread, worker) has its own instance and
+ * must warm itself.
+ */
+export async function warmZXingModule(): Promise<void> {
+  prepared = true;
+  await prepareZXingModule({ overrides: OVERRIDES, fireImmediately: true });
 }
 
 /** Sensible defaults for decoding: be thorough, search every format. */

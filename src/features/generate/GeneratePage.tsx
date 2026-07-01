@@ -41,44 +41,51 @@ export function GeneratePage() {
   const [otherText, setOtherText] = useState("");
   const [style, setStyle] = useState<GeneratorStyle>(DEFAULT_STYLE);
 
-  const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [content, setContent] = useState<string>("");
-  const [saved, setSaved] = useState(false);
+  const [otherSvg, setOtherSvg] = useState<string | null>(null);
+  const [otherError, setOtherError] = useState<string | null>(null);
+  const [savedKey, setSavedKey] = useState<string | null>(null);
 
   const contentType = useMemo(
     () => CONTENT_TYPES.find((c) => c.id === contentTypeId) ?? (CONTENT_TYPES[0] as ContentTypeDef),
     [contentTypeId],
   );
 
-  // Build the QR preview (synchronous, dependency-free encoder).
-  useEffect(() => {
-    if (selection.kind !== "qr") return;
-    const validation = contentType.validate(values);
-    if (!validation.ok) {
-      setSvg(null);
-      setError(null);
-      return;
-    }
+  // QR preview as staged derivations: encoding (mask evaluation is the
+  // expensive part) only re-runs when the text or EC level changes — colour
+  // and shape tweaks re-run just the cheap SVG render.
+  const qrText = useMemo(() => {
+    if (selection.kind !== "qr") return null;
+    if (!contentType.validate(values).ok) return null;
     try {
-      const text = contentType.build(values);
-      const matrix = qrMatrix(text, style.ecc);
-      setSvg(renderQrSvg(matrix, style));
-      setContent(text);
-      setError(null);
-    } catch (err) {
-      setSvg(null);
-      setError(err instanceof Error ? err.message : "Fehler beim Erzeugen.");
+      return contentType.build(values);
+    } catch {
+      return null;
     }
-    setSaved(false);
-  }, [selection.kind, contentType, values, style]);
+  }, [selection.kind, contentType, values]);
 
-  // Build the non-QR preview (async via zxing writer).
+  const qrEncoded = useMemo(() => {
+    if (qrText == null) return null;
+    try {
+      return { matrix: qrMatrix(qrText, style.ecc), error: null };
+    } catch (err) {
+      return {
+        matrix: null,
+        error: err instanceof Error ? err.message : "Fehler beim Erzeugen.",
+      };
+    }
+  }, [qrText, style.ecc]);
+
+  const qrSvg = useMemo(
+    () => (qrEncoded?.matrix ? renderQrSvg(qrEncoded.matrix, style) : null),
+    [qrEncoded, style],
+  );
+
+  // Build the non-QR preview (async via zxing writer, debounced).
   useEffect(() => {
     if (selection.kind !== "other") return;
     if (otherText.trim().length === 0) {
-      setSvg(null);
-      setError(null);
+      setOtherSvg(null);
+      setOtherError(null);
       return;
     }
     let cancelled = false;
@@ -86,15 +93,13 @@ export function GeneratePage() {
       try {
         const { svg: out } = await writeOther(selection.format, otherText);
         if (cancelled) return;
-        setSvg(out);
-        setContent(otherText);
-        setError(null);
+        setOtherSvg(out);
+        setOtherError(null);
       } catch (err) {
         if (cancelled) return;
-        setSvg(null);
-        setError(err instanceof Error ? err.message : "Format passt nicht zum Inhalt.");
+        setOtherSvg(null);
+        setOtherError(err instanceof Error ? err.message : "Format passt nicht zum Inhalt.");
       }
-      setSaved(false);
     }, 200);
     return () => {
       cancelled = true;
@@ -102,14 +107,20 @@ export function GeneratePage() {
     };
   }, [selection, otherText]);
 
+  const isQr = selection.kind === "qr";
+  const svg = isQr ? qrSvg : otherSvg;
+  const error = isQr ? (qrEncoded?.error ?? null) : otherError;
+  const content = isQr ? (qrText ?? "") : otherText;
   const currentFormat = selection.kind === "qr" ? "QRCode" : selection.format;
+  const saveKey = `${currentFormat}\u0000${content}`;
+  const saved = savedKey === saveKey;
 
   const onSave = useCallback(async () => {
-    if (!svg) return;
+    if (!svg || saved) return;
     const label = selection.kind === "qr" ? contentType.label : formatLabel(selection.format);
     await addGenerated({ format: currentFormat, content, label });
-    setSaved(true);
-  }, [svg, selection, contentType, content, currentFormat]);
+    setSavedKey(saveKey);
+  }, [svg, saved, selection, contentType, content, currentFormat, saveKey]);
 
   const exportAs = useCallback(
     async (kind: "svg" | "png" | "pdf") => {
@@ -242,7 +253,7 @@ export function GeneratePage() {
                   <Button variant="secondary" onClick={() => exportAs("pdf")}>
                     PDF
                   </Button>
-                  <Button variant="ghost" onClick={onSave}>
+                  <Button variant="ghost" onClick={onSave} disabled={saved}>
                     {saved ? <Check size={16} aria-hidden /> : null}{" "}
                     {saved ? "Gespeichert" : "Speichern"}
                   </Button>

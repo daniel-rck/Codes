@@ -11,11 +11,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { addScan } from "../../db/history.ts";
 import { Button, PageHeader } from "../../lib/ui/index.ts";
 import { decodeImageFile } from "../../scanner/decodeImage.ts";
+import { warmUpDecoder } from "../../scanner/decoderClient.ts";
 import { type ScanHit, startScanLoop } from "../../scanner/scanLoop.ts";
 import { useCamera } from "../../scanner/useCamera.ts";
 
-function isUrl(text: string): boolean {
-  return /^(https?|mailto|tel|geo|bitcoin):/i.test(text) || /^www\./i.test(text);
+/** Absolute href for openable scan results, or null when not a link. */
+function toHref(text: string): string | null {
+  if (/^(https?|mailto|tel|geo|bitcoin):/i.test(text)) return text;
+  // A bare "www.…" would resolve relative to the app origin — make it absolute.
+  if (/^www\./i.test(text)) return `https://${text}`;
+  return null;
 }
 
 export function ScanPage() {
@@ -28,6 +33,11 @@ export function ScanPage() {
   const stopLoop = useCallback(() => {
     loopRef.current?.stop();
     loopRef.current = null;
+  }, []);
+
+  // Pre-compile the worker's wasm so the first frame decode is instant.
+  useEffect(() => {
+    warmUpDecoder();
   }, []);
 
   const handleHit = useCallback(
@@ -162,6 +172,7 @@ export function ScanPage() {
 
 function ResultSheet({ hit, onClose }: { hit: ScanHit; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const href = toHref(hit.text);
 
   const copy = async () => {
     try {
@@ -190,8 +201,8 @@ function ResultSheet({ hit, onClose }: { hit: ScanHit; onClose: () => void }) {
         <Button onClick={copy}>
           <Copy size={16} aria-hidden /> {copied ? "Kopiert" : "Kopieren"}
         </Button>
-        {isUrl(hit.text) ? (
-          <a href={hit.text} target="_blank" rel="noreferrer noopener" className="inline-flex">
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer noopener" className="inline-flex">
             <Button variant="secondary">
               <ExternalLink size={16} aria-hidden /> Öffnen
             </Button>

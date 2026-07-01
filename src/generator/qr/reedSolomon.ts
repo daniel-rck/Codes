@@ -29,12 +29,18 @@ export function gfMul(a: number, b: number): number {
   return GF_EXP[(GF_LOG[a] as number) + (GF_LOG[b] as number)] as number;
 }
 
+// All EC blocks of a symbol share one degree, and up to 81 blocks divide by
+// the same polynomial — memoise instead of rebuilding it per block.
+const GENERATOR_CACHE = new Map<number, Uint8Array>();
+
 /**
  * Build the generator polynomial of the given degree, returned as coefficients
  * from the highest-order term down. The leading coefficient is always 1, so the
- * result has `degree + 1` entries.
+ * result has `degree + 1` entries. The returned array is cached — do not mutate.
  */
 export function rsGenerator(degree: number): Uint8Array {
+  const cached = GENERATOR_CACHE.get(degree);
+  if (cached) return cached;
   let poly = Uint8Array.of(1);
   for (let i = 0; i < degree; i++) {
     const root = GF_EXP[i] as number;
@@ -45,6 +51,7 @@ export function rsGenerator(degree: number): Uint8Array {
     }
     poly = next;
   }
+  GENERATOR_CACHE.set(degree, poly);
   return poly;
 }
 

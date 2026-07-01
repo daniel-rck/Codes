@@ -1,16 +1,18 @@
 /**
- * Decode barcodes from an image file or blob (gallery / file upload). zxing's
- * wasm has its own image decoder, so the raw bytes go straight in — no canvas
- * round-trip needed.
+ * Decode barcodes from an image file or blob (gallery / file upload). The raw
+ * bytes go to the shared decode worker — zxing's wasm has its own image
+ * decoder, and routing through the worker keeps the reader off the main
+ * thread entirely.
  */
-import { type ReaderOptions, readBarcodes } from "../shared/zxing.ts";
+import type { ReaderOptions } from "../shared/zxing.ts";
+import { decodeViaWorker, nextRequestId } from "./decoderClient.ts";
 
 export type ImageHit = { text: string; format: string };
 
 export async function decodeImageFile(file: Blob, options?: ReaderOptions): Promise<ImageHit[]> {
-  const buffer = new Uint8Array(await file.arrayBuffer());
-  const results = await readBarcodes(buffer, options);
-  return results
-    .filter((r) => r.isValid && r.text.length > 0)
-    .map((r) => ({ text: r.text, format: r.format }));
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const hits = await decodeViaWorker({ id: nextRequestId(), kind: "bytes", bytes, options }, [
+    bytes.buffer,
+  ]);
+  return hits.map((h) => ({ text: h.text, format: h.format }));
 }
