@@ -4,7 +4,6 @@
  * other format — EAN, Code128, PDF417, DataMatrix, Aztec, … — goes through here.
  */
 import {
-  CREATABLE_BARCODE_FORMATS,
   type CreatableBarcodeFormat,
   formatToLabel,
   type WriterOptions,
@@ -12,11 +11,6 @@ import {
 } from "../../shared/zxing.ts";
 
 export type { CreatableBarcodeFormat };
-
-/** Formats we expose in the generator besides our hand-rolled QR encoder. */
-export const OTHER_FORMATS: CreatableBarcodeFormat[] = CREATABLE_BARCODE_FORMATS.filter(
-  (f) => f !== "QRCode",
-);
 
 export function formatLabel(format: CreatableBarcodeFormat): string {
   return formatToLabel(format) ?? format;
