@@ -93,10 +93,16 @@ export type BitcoinInput = {
 
 // ── builders ─────────────────────────────────────────────────────────
 
+/**
+ * Schemes accepted without `//` — anything else with a bare `name:` prefix
+ * (e.g. `localhost:3000`) is treated as host:port, not as a URI scheme.
+ */
+const BARE_SCHEMES = /^(mailto|tel|sms|smsto|geo|bitcoin|urn|news):/i;
+
 /** Normalise a URL, prepending https:// when no scheme is present. */
 export function buildUrl({ url }: UrlInput): string {
   const trimmed = url.trim();
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || /^[a-z]+:/i.test(trimmed)) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || BARE_SCHEMES.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
 }
 
@@ -118,7 +124,9 @@ export function buildEmail({ to, subject, body }: EmailInput): string {
 
 export function buildSms({ number, message }: SmsInput): string {
   const n = number.replace(/[^\d+]/g, "");
-  return message ? `SMSTO:${n}:${message}` : `SMSTO:${n}`;
+  // SMSTO is line-oriented — control characters would corrupt the payload.
+  const msg = message?.replace(/[\r\n\t]+/g, " ").replace(/[\p{Cc}]/gu, "");
+  return msg ? `SMSTO:${n}:${msg}` : `SMSTO:${n}`;
 }
 
 export function buildTel({ number }: TelInput): string {
@@ -163,12 +171,20 @@ export function buildMeCard(input: VCardInput): string {
 }
 
 export function buildEvent(input: EventInput): string {
-  const lines = ["BEGIN:VEVENT", `SUMMARY:${escapeVcard(input.summary)}`];
+  // A bare VEVENT is not a valid iCalendar object — wrap it in VCALENDAR so
+  // calendar apps actually import it.
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//codes//DE",
+    "BEGIN:VEVENT",
+    `SUMMARY:${escapeVcard(input.summary)}`,
+  ];
   lines.push(`DTSTART:${toICalDate(input.start)}`);
   if (input.end) lines.push(`DTEND:${toICalDate(input.end)}`);
   if (input.location) lines.push(`LOCATION:${escapeVcard(input.location)}`);
   if (input.description) lines.push(`DESCRIPTION:${escapeVcard(input.description)}`);
-  lines.push("END:VEVENT");
+  lines.push("END:VEVENT", "END:VCALENDAR");
   return lines.join("\n");
 }
 

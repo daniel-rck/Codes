@@ -109,10 +109,12 @@ function eyeSvg(ox: number, oy: number, shape: EyeShape, fill: string): string {
 
 function gradientDef(gradient: QrGradient): { def: string; ref: string } {
   const id = "qrgrad";
+  const from = escapeXml(gradient.from);
+  const to = escapeXml(gradient.to);
   if (gradient.type === "radial") {
     return {
       ref: `url(#${id})`,
-      def: `<radialGradient id="${id}"><stop offset="0%" stop-color="${gradient.from}"/><stop offset="100%" stop-color="${gradient.to}"/></radialGradient>`,
+      def: `<radialGradient id="${id}"><stop offset="0%" stop-color="${from}"/><stop offset="100%" stop-color="${to}"/></radialGradient>`,
     };
   }
   const angle = gradient.rotation ?? 0;
@@ -123,15 +125,25 @@ function gradientDef(gradient: QrGradient): { def: string; ref: string } {
   const y1 = (50 - 50 * Math.sin(rad)).toFixed(2);
   return {
     ref: `url(#${id})`,
-    def: `<linearGradient id="${id}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%"><stop offset="0%" stop-color="${gradient.from}"/><stop offset="100%" stop-color="${gradient.to}"/></linearGradient>`,
+    def: `<linearGradient id="${id}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%"><stop offset="0%" stop-color="${from}"/><stop offset="100%" stop-color="${to}"/></linearGradient>`,
   };
+}
+
+/** Centre cut-out square for a logo, in module coordinates (lo..hi). */
+function logoBox(size: number, logo: QrLogo): { lo: number; hi: number } {
+  const ratio = Math.min(0.3, Math.max(0.05, logo.sizeRatio ?? 0.2));
+  const boxSize = size * ratio + (logo.padding ?? 1) * 2;
+  const lo = (size - boxSize) / 2;
+  return { lo, hi: lo + boxSize };
 }
 
 /** Build a styled SVG string for the given matrix. */
 export function renderQrSvg(matrix: QrMatrix, style: QrRenderStyle = {}): string {
   const margin = style.margin ?? DEFAULTS.margin;
-  const fg = style.fg ?? DEFAULTS.fg;
-  const bg = style.bg ?? DEFAULTS.bg;
+  // The SVG is injected via innerHTML downstream — escape every interpolated
+  // style string exactly once here, at read time.
+  const fg = escapeXml(style.fg ?? DEFAULTS.fg);
+  const bg = escapeXml(style.bg ?? DEFAULTS.bg);
   const moduleShape = style.moduleShape ?? DEFAULTS.moduleShape;
   const eyeShape = style.eyeShape ?? DEFAULTS.eyeShape;
   const size = matrix.size;
@@ -139,7 +151,7 @@ export function renderQrSvg(matrix: QrMatrix, style: QrRenderStyle = {}): string
 
   const grad = style.gradient ? gradientDef(style.gradient) : null;
   const moduleFill = grad ? grad.ref : fg;
-  const eyeFill = style.eyeColor ?? (grad ? grad.ref : fg);
+  const eyeFill = style.eyeColor ? escapeXml(style.eyeColor) : grad ? grad.ref : fg;
 
   const parts: string[] = [];
   const defs: string[] = [];
@@ -154,11 +166,17 @@ export function renderQrSvg(matrix: QrMatrix, style: QrRenderStyle = {}): string
   parts.push(`<g transform="translate(${margin} ${margin})">`);
 
   // Data + timing/alignment modules (eyes drawn separately for clean styling).
+  // Modules under the logo cut-out are skipped so the area stays quiet even
+  // with a transparent logo background (parity with the rasteriser).
+  const cut = style.logo ? logoBox(size, style.logo) : null;
   const cells: string[] = [];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       if (!(matrix.modules[y] as boolean[])[x]) continue;
       if (isEyeModule(x, y, size)) continue;
+      if (cut && x + 0.5 > cut.lo && x + 0.5 < cut.hi && y + 0.5 > cut.lo && y + 0.5 < cut.hi) {
+        continue;
+      }
       cells.push(moduleSvg(x, y, moduleShape, moduleFill));
     }
   }
@@ -170,16 +188,14 @@ export function renderQrSvg(matrix: QrMatrix, style: QrRenderStyle = {}): string
   parts.push(eyeSvg(0, size - FINDER_SIZE, eyeShape, eyeFill));
 
   // Centred logo with a quiet cut-out.
-  if (style.logo) {
+  if (style.logo && cut) {
     const ratio = Math.min(0.3, Math.max(0.05, style.logo.sizeRatio ?? 0.2));
     const logoSize = size * ratio;
-    const pad = style.logo.padding ?? 1;
-    const boxSize = logoSize + pad * 2;
-    const boxPos = (size - boxSize) / 2;
+    const boxSize = cut.hi - cut.lo;
     const logoPos = (size - logoSize) / 2;
-    const logoBg = style.logo.background ?? "#ffffff";
+    const logoBg = escapeXml(style.logo.background ?? "#ffffff");
     parts.push(
-      `<rect x="${boxPos}" y="${boxPos}" width="${boxSize}" height="${boxSize}" rx="${boxSize * 0.15}" fill="${logoBg}"/>`,
+      `<rect x="${cut.lo}" y="${cut.lo}" width="${boxSize}" height="${boxSize}" rx="${boxSize * 0.15}" fill="${logoBg}"/>`,
     );
     parts.push(
       `<image x="${logoPos}" y="${logoPos}" width="${logoSize}" height="${logoSize}" href="${escapeXml(style.logo.href)}" preserveAspectRatio="xMidYMid meet"/>`,
@@ -192,8 +208,8 @@ export function renderQrSvg(matrix: QrMatrix, style: QrRenderStyle = {}): string
 
   // Optional CTA frame: enlarge the canvas and add a bottom label bar.
   if (style.frame) {
-    const frameBg = style.frame.background ?? fg;
-    const frameText = style.frame.textColor ?? "#ffffff";
+    const frameBg = style.frame.background ? escapeXml(style.frame.background) : fg;
+    const frameText = style.frame.textColor ? escapeXml(style.frame.textColor) : "#ffffff";
     const border = dim * 0.06;
     const barHeight = dim * 0.16;
     const outerW = dim + border * 2;
@@ -228,8 +244,9 @@ function hexToRgb(color: string): [number, number, number] {
 
 /**
  * DOM-free rasteriser honouring colours, module shape and an optional logo
- * cut-out. Gradients are flattened to the foreground colour. Used for PNG
- * export fallback and decodability tests.
+ * cut-out. Gradients are flattened to the `from` colour. Used by the
+ * decodability tests (PNG export goes through the SVG → canvas path in
+ * `shared/export.ts`).
  */
 export function rasterizeQr(matrix: QrMatrix, style: QrRenderStyle = {}, scale = 8): RasterImage {
   const margin = style.margin ?? DEFAULTS.margin;

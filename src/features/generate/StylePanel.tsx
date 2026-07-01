@@ -2,8 +2,8 @@
  * Collapsible styling controls for QR codes: error-correction level, colours,
  * gradient, module/eye shapes, centred logo and CTA frame.
  */
-import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { Chip, Field, Input, Switch } from "../../components/form.tsx";
 import type { EccLevel } from "../../generator/qr/encode.ts";
 import type { EyeShape, ModuleShape, QrRenderStyle } from "../../generator/qr/renderQr.ts";
@@ -44,21 +44,26 @@ export type StylePanelProps = {
 
 export function StylePanel({ value, onChange }: StylePanelProps) {
   const [open, setOpen] = useState(false);
+  // ECC level chosen before a logo forced it to H, restored on logo removal.
+  const eccBeforeLogo = useRef<EccLevel | null>(null);
   const patch = (next: Partial<GeneratorStyle>) => onChange({ ...value, ...next });
 
   const onLogoFile = (file: File | undefined) => {
-    if (!file) {
-      patch({ logo: undefined });
-      return;
-    }
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
+      if (!value.logo) eccBeforeLogo.current = value.ecc;
       patch({
         logo: { href: String(reader.result), sizeRatio: value.logo?.sizeRatio ?? 0.18, padding: 1 },
         ecc: "H", // logos cover modules — require the strongest EC.
       });
     };
     reader.readAsDataURL(file);
+  };
+
+  const removeLogo = () => {
+    patch({ logo: undefined, ecc: eccBeforeLogo.current ?? value.ecc });
+    eccBeforeLogo.current = null;
   };
 
   return (
@@ -203,12 +208,26 @@ export function StylePanel({ value, onChange }: StylePanelProps) {
 
           <Field label="Logo (optional)" hint="Bei Logo wird Fehlerkorrektur H gesetzt.">
             {(id) => (
-              <Input
-                id={id}
-                type="file"
-                accept="image/*"
-                onChange={(e) => onLogoFile(e.target.files?.[0])}
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  id={id}
+                  // Remount on removal so the file input actually clears.
+                  key={value.logo ? "logo-set" : "logo-empty"}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => onLogoFile(e.target.files?.[0])}
+                />
+                {value.logo ? (
+                  <button
+                    type="button"
+                    onClick={removeLogo}
+                    className="shrink-0 rounded-md border border-border p-2 text-fg-muted hover:bg-surface-sunken hover:text-danger"
+                    aria-label="Logo entfernen"
+                  >
+                    <X size={16} aria-hidden />
+                  </button>
+                ) : null}
+              </div>
             )}
           </Field>
 

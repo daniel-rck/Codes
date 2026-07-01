@@ -69,4 +69,27 @@ describe("renderQrSvg output", () => {
     const svg = renderQrSvg(matrix, { frame: { text: "A & B <C>" } });
     expect(svg).toContain("A &amp; B &lt;C&gt;");
   });
+
+  it("escapes hostile colour values instead of injecting markup", () => {
+    const svg = renderQrSvg(matrix, {
+      fg: `"><script>alert(1)</script>`,
+      bg: `red" onload="x`,
+      gradient: { type: "linear", from: `"><img src=x>`, to: "#000" },
+      frame: { text: "ok", background: `"><foreignObject>` },
+    });
+    expect(svg).not.toContain("<script");
+    expect(svg).not.toContain("<img");
+    expect(svg).not.toContain("<foreignObject");
+    expect(svg).not.toContain(`onload="x"`);
+  });
+
+  it("leaves no modules under the logo cut-out in the SVG", () => {
+    const withLogo = renderQrSvg(matrix, {
+      logo: { href: "data:image/png;base64,AAAA", sizeRatio: 0.2 },
+    });
+    const without = renderQrSvg(matrix, {});
+    const countRects = (s: string) => (s.match(/<rect /g) ?? []).length;
+    // Logo adds one rect (the cut-out) but removes several module rects.
+    expect(countRects(withLogo)).toBeLessThan(countRects(without) + 1);
+  });
 });

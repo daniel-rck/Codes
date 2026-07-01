@@ -110,7 +110,7 @@ export async function toPDFBlob(svg: string, options: RasterOptions = {}): Promi
   imgStream.set(enc.encode("\nendstream"), imgHeader.length + compressed.length);
   objects.push(imgStream);
   const content = `q ${pagePt} 0 0 ${pagePt} 0 0 cm /Im0 Do Q`;
-  objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+  objects.push(`<< /Length ${enc.encode(content).length} >>\nstream\n${content}\nendstream`);
 
   // Serialise with a cross-reference table.
   const chunks: Uint8Array[] = [];

@@ -22,6 +22,10 @@ describe("URL builder", () => {
   it("prepends https:// when no scheme", () => {
     expect(buildUrl({ url: "example.com/x" })).toBe("https://example.com/x");
   });
+  it("treats host:port as host, not as a URI scheme", () => {
+    expect(buildUrl({ url: "localhost:3000" })).toBe("https://localhost:3000");
+    expect(buildUrl({ url: "myhost:8080/admin" })).toBe("https://myhost:8080/admin");
+  });
 });
 
 describe("WiFi builder", () => {
@@ -49,6 +53,11 @@ describe("email / sms / tel builders", () => {
   it("builds SMSTO", () => {
     expect(buildSms({ number: "+49 170 1234567", message: "hello" })).toBe(
       "SMSTO:+491701234567:hello",
+    );
+  });
+  it("flattens control characters in the SMS message", () => {
+    expect(buildSms({ number: "+49123", message: "line1\nline2" })).toBe(
+      "SMSTO:+49123:line1 line2",
     );
   });
   it("builds tel", () => {
@@ -89,18 +98,22 @@ describe("event builder", () => {
   it("formats iCal dates as basic UTC", () => {
     expect(toICalDate("2026-01-01T09:00:00Z")).toBe("20260101T090000Z");
   });
-  it("builds a VEVENT", () => {
+  it("builds a VEVENT wrapped in a VCALENDAR", () => {
     const out = buildEvent({
       summary: "Launch",
       start: "2026-01-01T09:00:00Z",
       end: "2026-01-01T10:00:00Z",
       location: "Berlin",
     });
+    expect(out.startsWith("BEGIN:VCALENDAR")).toBe(true);
+    expect(out).toContain("VERSION:2.0");
     expect(out).toContain("BEGIN:VEVENT");
     expect(out).toContain("SUMMARY:Launch");
     expect(out).toContain("DTSTART:20260101T090000Z");
     expect(out).toContain("DTEND:20260101T100000Z");
     expect(out).toContain("LOCATION:Berlin");
+    expect(out).toContain("END:VEVENT");
+    expect(out.trimEnd().endsWith("END:VCALENDAR")).toBe(true);
   });
 });
 
