@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="codes">
+  <title>codes</title>
+  <rect width="32" height="32" rx="6" fill="#0a0a0a" />
+  <g fill="oklch(0.62 0.18 190)">
+    <rect x="5" y="5" width="9" height="9" rx="1" />
+    <rect x="18" y="5" width="9" height="9" rx="1" />
+    <rect x="5" y="18" width="9" height="9" rx="1" />
+  </g>
+  <g fill="#0a0a0a">
+    <rect x="8" y="8" width="3" height="3" />
+    <rect x="21" y="8" width="3" height="3" />
+    <rect x="8" y="21" width="3" height="3" />
+  </g>
+  <g fill="oklch(0.62 0.18 190)">
+    <rect x="18" y="18" width="3" height="3" />
+    <rect x="24" y="18" width="3" height="3" />
+    <rect x="18" y="24" width="3" height="3" />
+    <rect x="24" y="24" width="3" height="3" />
+    <rect x="21" y="21" width="3" height="3" />
+  </g>
+</svg>
