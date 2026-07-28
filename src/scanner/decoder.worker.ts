@@ -9,6 +9,7 @@ import {
   type ReaderOptions,
   type ReadResult,
   readBarcodes,
+  readerOptionsFor,
   warmZXingModule,
 } from "../shared/zxing.ts";
 
@@ -43,7 +44,7 @@ self.addEventListener("message", async (event: MessageEvent<DecodeRequest>) => {
       return;
     }
     const input = request.kind === "image" ? request.image : request.bytes;
-    const results = await readBarcodes(input, request.options);
+    const results = await readBarcodes(input, request.options ?? readerOptionsFor(request.kind));
     const hits = results.filter((r) => r.isValid && r.text.length > 0).map(toHit);
     post({ id: request.id, ok: true, results: hits });
   } catch (err) {

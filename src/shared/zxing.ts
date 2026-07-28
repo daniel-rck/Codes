@@ -59,6 +59,28 @@ export const DEFAULT_READER_OPTIONS: ReaderOptions = {
   tryDownscale: true,
 };
 
+/**
+ * Live camera frames. Same thoroughness as the defaults — `tryHarder` is what
+ * makes zxing lay scanlines across the whole frame instead of a few rows in the
+ * middle band, without which 1D codes (EAN, Code128, …) are only found when
+ * they happen to sit dead centre. The scan loop consumes a single result, so
+ * cap the symbol search to offset part of the extra work.
+ */
+export const CAMERA_READER_OPTIONS: ReaderOptions = {
+  ...DEFAULT_READER_OPTIONS,
+  maxNumberOfSymbols: 1,
+};
+
+/**
+ * Reader options per decode request: live camera frames get the camera profile,
+ * file/gallery bytes the general defaults. Lives here rather than at the call
+ * site so the scan loop stays free of the zxing glue — it runs on the main
+ * thread, where the reader is deliberately never loaded.
+ */
+export function readerOptionsFor(kind: "image" | "bytes"): ReaderOptions {
+  return kind === "image" ? CAMERA_READER_OPTIONS : DEFAULT_READER_OPTIONS;
+}
+
 export async function readBarcodes(
   input: ImageData | Blob | ArrayBuffer | Uint8Array,
   options: ReaderOptions = DEFAULT_READER_OPTIONS,
