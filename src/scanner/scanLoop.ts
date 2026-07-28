@@ -3,9 +3,23 @@
  * offscreen canvas and hands the ImageData to the shared decode worker at
  * ~6–10 fps. One frame is in flight at a time; responses are matched by
  * request id because the worker is shared with other consumers.
+ *
+ * Because only one frame may be in flight, a lost response would stall the loop
+ * for good — the preview keeps running while nothing is ever decoded again. A
+ * watchdog frees the slot and reports the stall instead of failing silently.
  */
 import type { DecodeRequest, DecodeResponse } from "./decoder.worker.ts";
 import { getDecoderWorker, nextRequestId } from "./decoderClient.ts";
+
+/**
+ * How long to wait for a frame's decode result before freeing the slot. Well
+ * above a normal decode (single-digit to low tens of ms) because the very first
+ * frame can queue behind the wasm cold start.
+ */
+const FRAME_TIMEOUT_MS = 6000;
+
+/** Consecutive timeouts before the user is told the decoder is unresponsive. */
+const TIMEOUTS_BEFORE_ERROR = 2;
 
 export type ScanHit = { text: string; format: string };
 
@@ -32,10 +46,19 @@ export function startScanLoop(video: HTMLVideoElement, options: ScanLoopOptions)
   let lastSent = 0;
   let rafId = 0;
   let inFlightId = -1;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let timeouts = 0;
+
+  const clearWatchdog = () => {
+    if (watchdog !== undefined) clearTimeout(watchdog);
+    watchdog = undefined;
+  };
 
   const onMessage = (event: MessageEvent<DecodeResponse>) => {
     // The worker is shared — only consume responses to our own frames.
     if (event.data.id !== inFlightId) return;
+    clearWatchdog();
+    timeouts = 0;
     busy = false;
     if (!running) return;
     const data = event.data;
@@ -46,7 +69,18 @@ export function startScanLoop(video: HTMLVideoElement, options: ScanLoopOptions)
     const first = data.results[0];
     if (first) options.onHit({ text: first.text, format: first.format });
   };
+
+  // A worker that fails to load or receives an unclonable message never answers
+  // — surface it instead of leaving the preview running on a dead decoder.
+  const onWorkerFailure = () => {
+    clearWatchdog();
+    busy = false;
+    if (running) options.onError?.("Decoder konnte nicht geladen werden.");
+  };
+
   worker.addEventListener("message", onMessage);
+  worker.addEventListener("error", onWorkerFailure);
+  worker.addEventListener("messageerror", onWorkerFailure);
 
   const tick = (now: number) => {
     if (!running) return;
@@ -67,12 +101,21 @@ export function startScanLoop(video: HTMLVideoElement, options: ScanLoopOptions)
 
     busy = true;
     inFlightId = nextRequestId();
-    const request: DecodeRequest = {
-      id: inFlightId,
-      kind: "image",
-      image,
-      options: { formats: [], tryHarder: false },
-    };
+    // No `options`: the worker applies the camera profile for `image` requests
+    // (`readerOptionsFor` in shared/zxing.ts), keeping the zxing glue out of the
+    // main-thread bundle.
+    const request: DecodeRequest = { id: inFlightId, kind: "image", image };
+    clearWatchdog();
+    watchdog = setTimeout(() => {
+      watchdog = undefined;
+      // Free the slot so the loop keeps decoding; only complain once a second
+      // frame in a row went unanswered, so a slow cold start stays quiet.
+      busy = false;
+      timeouts += 1;
+      if (running && timeouts >= TIMEOUTS_BEFORE_ERROR) {
+        options.onError?.("Decoder antwortet nicht.");
+      }
+    }, FRAME_TIMEOUT_MS);
     worker.postMessage(request, [image.data.buffer]);
   };
 
@@ -82,8 +125,11 @@ export function startScanLoop(video: HTMLVideoElement, options: ScanLoopOptions)
     stop() {
       running = false;
       cancelAnimationFrame(rafId);
+      clearWatchdog();
       // Keep the worker alive — it is shared and holds the compiled wasm.
       worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onWorkerFailure);
+      worker.removeEventListener("messageerror", onWorkerFailure);
     },
   };
 }

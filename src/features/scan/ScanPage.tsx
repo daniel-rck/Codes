@@ -29,6 +29,7 @@ export function ScanPage() {
   const loopRef = useRef<{ stop: () => void } | null>(null);
   const [result, setResult] = useState<ScanHit | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const stopLoop = useCallback(() => {
     loopRef.current?.stop();
@@ -57,7 +58,8 @@ export function ScanPage() {
     video.srcObject = camera.stream;
     void video.play().catch(() => undefined);
     if (!result) {
-      loopRef.current = startScanLoop(video, { onHit: handleHit });
+      setScanError(null);
+      loopRef.current = startScanLoop(video, { onHit: handleHit, onError: setScanError });
     }
     return stopLoop;
   }, [camera.stream, result, handleHit, stopLoop]);
@@ -162,7 +164,9 @@ export function ScanPage() {
           ) : null}
         </div>
 
-        {imageError ? <p className="text-center text-sm text-danger">{imageError}</p> : null}
+        {(imageError ?? scanError) ? (
+          <p className="text-center text-sm text-danger">{imageError ?? scanError}</p>
+        ) : null}
       </div>
 
       {result ? <ResultSheet hit={result} onClose={rescan} /> : null}
