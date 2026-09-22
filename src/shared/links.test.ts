@@ -7,6 +7,11 @@ describe("toHref", () => {
     expect(toHref("MAILTO:a@b.de")).toBe("MAILTO:a@b.de");
     expect(toHref("tel:+491234")).toBe("tel:+491234");
   });
+  it("translates SMSTO payloads to sms: URIs", () => {
+    expect(toHref("SMSTO:+491234")).toBe("sms:+491234");
+    expect(toHref("SMSTO:+491234:Hallo Welt")).toBe("sms:+491234?body=Hallo%20Welt");
+    expect(toHref("smsto:123:a:b")).toBe("sms:123?body=a%3Ab");
+  });
   it("makes bare www hosts absolute", () => {
     expect(toHref("www.example.com")).toBe("https://www.example.com");
   });
