@@ -33,6 +33,57 @@ export async function writeOther(
   options: WriteOtherOptions = {},
 ): Promise<WriteOtherResult> {
   const result = await writeBarcode(content, { format, ...options });
-  if (result.error) throw new Error(result.error);
+  if (result.error) throw new Error(cleanWriterError(result.error));
   return { svg: result.svg, image: result.image };
 }
+
+/**
+ * zint errors carry internal codes ("Error 275: … (retval: 7)") that mean
+ * nothing to users — keep just the message.
+ */
+export function cleanWriterError(message: string): string {
+  const cleaned = message
+    .replace(/^Error \d+:\s*/, "")
+    .replace(/\s*\(retval: -?\d+\)\s*$/, "")
+    .trim();
+  const checkDigit = /^Invalid check digit '(.+)', expecting '(.+)'$/.exec(cleaned);
+  if (checkDigit) {
+    return `Ungültige Prüfziffer „${checkDigit[1]}“ — erwartet wird „${checkDigit[2]}“.`;
+  }
+  return cleaned;
+}
+
+export type FormatInputHint = {
+  hint: string;
+  placeholder: string;
+  numeric: boolean;
+};
+
+/** Input guidance per creatable format, shown under the content field. */
+export const FORMAT_INPUT_HINTS: Partial<Record<CreatableBarcodeFormat, FormatInputHint>> = {
+  Code128: { hint: "Beliebiger ASCII-Text.", placeholder: "ABC-12345", numeric: false },
+  EAN13: {
+    hint: "12 Ziffern (Prüfziffer wird berechnet) oder 13 Ziffern.",
+    placeholder: "400638133393",
+    numeric: true,
+  },
+  EAN8: {
+    hint: "7 Ziffern (Prüfziffer wird berechnet) oder 8 Ziffern.",
+    placeholder: "9638507",
+    numeric: true,
+  },
+  UPCA: {
+    hint: "11 Ziffern (Prüfziffer wird berechnet) oder 12 Ziffern.",
+    placeholder: "03600029145",
+    numeric: true,
+  },
+  Code39: {
+    hint: "Buchstaben A–Z, Ziffern, Leerzeichen und - . $ / + %.",
+    placeholder: "CODE-39",
+    numeric: false,
+  },
+  ITF: { hint: "Nur Ziffern.", placeholder: "12345678", numeric: true },
+  PDF417: { hint: "Beliebiger Text, auch lang.", placeholder: "Inhalt eingeben …", numeric: false },
+  DataMatrix: { hint: "Beliebiger Text.", placeholder: "Inhalt eingeben …", numeric: false },
+  Aztec: { hint: "Beliebiger Text.", placeholder: "Inhalt eingeben …", numeric: false },
+};

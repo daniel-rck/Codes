@@ -1,5 +1,5 @@
-import { Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { Check, Copy, ExternalLink, Trash2 } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   clearGenerated,
   clearScans,
@@ -12,12 +12,20 @@ import {
 } from "../../db/history.ts";
 import { useLiveQuery } from "../../lib/db/index.ts";
 import { Badge, Button, EmptyState, PageHeader } from "../../lib/ui/index.ts";
+import { toHref } from "../../shared/links.ts";
 
 function formatDate(ts: number): string {
   return new Date(ts).toLocaleString("de-DE", {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+/** Bulk delete is irreversible — ask first. */
+function confirmClear(kind: string, clear: () => Promise<void>): void {
+  if (window.confirm(`Alle ${kind} Einträge löschen? Das lässt sich nicht rückgängig machen.`)) {
+    void clear();
+  }
 }
 
 export function HistoryPage() {
@@ -39,7 +47,11 @@ export function HistoryPage() {
         />
       ) : (
         <div className="space-y-8">
-          <Section title="Gescannt" count={scanItems.length} onClear={() => void clearScans()}>
+          <Section
+            title="Gescannt"
+            count={scanItems.length}
+            onClear={() => confirmClear("gescannten", clearScans)}
+          >
             {scanItems.map((entry) => (
               <Row
                 key={entry.id}
@@ -51,7 +63,11 @@ export function HistoryPage() {
             ))}
           </Section>
 
-          <Section title="Erstellt" count={genItems.length} onClear={() => void clearGenerated()}>
+          <Section
+            title="Erstellt"
+            count={genItems.length}
+            onClear={() => confirmClear("erstellten", clearGenerated)}
+          >
             {genItems.map((entry) => (
               <Row
                 key={entry.id}
@@ -86,7 +102,7 @@ function Section({
         <h3 className="text-sm font-semibold text-fg-muted">
           {title} ({count})
         </h3>
-        <Button size="sm" variant="ghost" onClick={onClear}>
+        <Button size="sm" variant="ghost" onClick={onClear} className="hover:text-danger">
           Alle löschen
         </Button>
       </div>
@@ -108,22 +124,75 @@ function Row({
   date: string;
   onDelete: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const href = toHref(text);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      // Clipboard unavailable (permissions / insecure context) — nothing to do.
+    }
+  };
+
+  const iconButton =
+    "shrink-0 rounded-md p-2 text-fg-subtle hover:bg-surface-sunken " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+
   return (
-    <li className="flex items-start gap-3 p-3">
-      <div className="min-w-0 flex-1">
+    <li className="flex items-start gap-1 p-3">
+      <div className="min-w-0 flex-1 pr-2">
         <div className="mb-1 flex items-center gap-2">
           <Badge variant="accent">{badge}</Badge>
           <span className="text-xs text-fg-subtle">{date}</span>
         </div>
-        <p className="truncate text-sm text-fg" title={text}>
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          aria-expanded={expanded}
+          className={`block w-full rounded text-left text-sm text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 ${
+            expanded ? "whitespace-pre-wrap break-words" : "truncate"
+          }`}
+          title={expanded ? undefined : "Vollständig anzeigen"}
+        >
           {text}
-        </p>
+        </button>
       </div>
       <button
         type="button"
+        onClick={() => void copy()}
+        className={`${iconButton} hover:text-fg`}
+        aria-label={copied ? "Kopiert" : "Inhalt kopieren"}
+        title={copied ? "Kopiert" : "Kopieren"}
+      >
+        {copied ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
+      </button>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className={`${iconButton} hover:text-fg`}
+          aria-label="Link öffnen"
+          title="Öffnen"
+        >
+          <ExternalLink size={16} aria-hidden />
+        </a>
+      ) : null}
+      <button
+        type="button"
         onClick={onDelete}
-        className="shrink-0 rounded-md p-2 text-fg-subtle hover:bg-surface-sunken hover:text-danger"
+        className={`${iconButton} hover:text-danger`}
         aria-label="Eintrag löschen"
+        title="Löschen"
       >
         <Trash2 size={16} aria-hidden />
       </button>

@@ -121,24 +121,28 @@ const BUTTON_SIZE: Record<ButtonSize, string> = {
   lg: "h-12 px-6 text-base",
 };
 
+/** Button styling for non-button elements (e.g. links that look like buttons). */
+export function buttonClass(
+  variant: ButtonVariant = "primary",
+  size: ButtonSize = "md",
+  className?: string,
+): string {
+  return cn(
+    "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+    "disabled:cursor-not-allowed",
+    BUTTON_VARIANT[variant],
+    BUTTON_SIZE[size],
+    className,
+  );
+}
+
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { className, variant = "primary", size = "md", children, type = "button", ...rest },
   ref,
 ) {
   return (
-    <button
-      ref={ref}
-      type={type}
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
-        "disabled:cursor-not-allowed",
-        BUTTON_VARIANT[variant],
-        BUTTON_SIZE[size],
-        className,
-      )}
-      {...rest}
-    >
+    <button ref={ref} type={type} className={buttonClass(variant, size, className)} {...rest}>
       {children}
     </button>
   );

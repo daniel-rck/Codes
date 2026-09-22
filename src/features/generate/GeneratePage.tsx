@@ -1,9 +1,10 @@
-import { Check, Download } from "lucide-react";
+import { Bookmark, Check, Download } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chip, Field, Input, Select, Textarea } from "../../components/form.tsx";
 import { addGenerated } from "../../db/history.ts";
 import {
   type CreatableBarcodeFormat,
+  FORMAT_INPUT_HINTS,
   formatLabel,
   writeOther,
 } from "../../generator/barcode/writeOther.ts";
@@ -37,31 +38,49 @@ type FormatSelection = { kind: "qr" } | { kind: "other"; format: CreatableBarcod
 export function GeneratePage() {
   const [selection, setSelection] = useState<FormatSelection>({ kind: "qr" });
   const [contentTypeId, setContentTypeId] = useState<ContentTypeDef["id"]>("url");
-  const [values, setValues] = useState<ContentValues>({});
+  // Inputs are kept per content type so switching chips doesn't wipe them.
+  const [valuesByType, setValuesByType] = useState<
+    Partial<Record<ContentTypeDef["id"], ContentValues>>
+  >({});
   const [otherText, setOtherText] = useState("");
   const [style, setStyle] = useState<GeneratorStyle>(DEFAULT_STYLE);
 
   const [otherSvg, setOtherSvg] = useState<string | null>(null);
   const [otherError, setOtherError] = useState<string | null>(null);
   const [savedKey, setSavedKey] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const contentType = useMemo(
     () => CONTENT_TYPES.find((c) => c.id === contentTypeId) ?? (CONTENT_TYPES[0] as ContentTypeDef),
     [contentTypeId],
   );
+  const values = useMemo(() => valuesByType[contentTypeId] ?? {}, [valuesByType, contentTypeId]);
+  const setField = useCallback(
+    (key: string, value: string) =>
+      setValuesByType((all) => ({
+        ...all,
+        [contentTypeId]: { ...all[contentTypeId], [key]: value },
+      })),
+    [contentTypeId],
+  );
+
+  // Once something was typed, explain why there is no preview instead of
+  // silently showing the empty-state hint.
+  const validation = useMemo(() => contentType.validate(values), [contentType, values]);
+  const hasInput = Object.values(values).some((v) => v.trim().length > 0);
 
   // QR preview as staged derivations: encoding (mask evaluation is the
   // expensive part) only re-runs when the text or EC level changes — colour
   // and shape tweaks re-run just the cheap SVG render.
   const qrText = useMemo(() => {
     if (selection.kind !== "qr") return null;
-    if (!contentType.validate(values).ok) return null;
+    if (!validation.ok) return null;
     try {
       return contentType.build(values);
     } catch {
       return null;
     }
-  }, [selection.kind, contentType, values]);
+  }, [selection.kind, validation, contentType, values]);
 
   const qrEncoded = useMemo(() => {
     if (qrText == null) return null;
@@ -109,7 +128,10 @@ export function GeneratePage() {
 
   const isQr = selection.kind === "qr";
   const svg = isQr ? qrSvg : otherSvg;
-  const error = isQr ? (qrEncoded?.error ?? null) : otherError;
+  const qrError =
+    qrEncoded?.error ?? (!validation.ok && hasInput ? validation.error : null) ?? null;
+  const error = isQr ? qrError : otherError;
+  const otherHint = selection.kind === "other" ? FORMAT_INPUT_HINTS[selection.format] : undefined;
   const content = isQr ? (qrText ?? "") : otherText;
   const currentFormat = selection.kind === "qr" ? "QRCode" : selection.format;
   const saveKey = `${currentFormat}\u0000${content}`;
@@ -125,13 +147,18 @@ export function GeneratePage() {
   const exportAs = useCallback(
     async (kind: "svg" | "png" | "pdf") => {
       if (!svg) return;
+      setExportError(null);
       const base = `codes-${currentFormat.toLowerCase()}`;
-      if (kind === "svg") {
-        downloadBlob(new Blob([toSVGString(svg)], { type: "image/svg+xml" }), `${base}.svg`);
-      } else if (kind === "png") {
-        downloadBlob(await toPNGBlob(svg, { size: 1024 }), `${base}.png`);
-      } else {
-        downloadBlob(await toPDFBlob(svg, { size: 1024 }), `${base}.pdf`);
+      try {
+        if (kind === "svg") {
+          downloadBlob(new Blob([toSVGString(svg)], { type: "image/svg+xml" }), `${base}.svg`);
+        } else if (kind === "png") {
+          downloadBlob(await toPNGBlob(svg, { size: 1024 }), `${base}.png`);
+        } else {
+          downloadBlob(await toPDFBlob(svg, { size: 1024 }), `${base}.pdf`);
+        }
+      } catch {
+        setExportError(`Export als ${kind.toUpperCase()} fehlgeschlagen.`);
       }
     },
     [svg, currentFormat],
@@ -169,10 +196,7 @@ export function GeneratePage() {
                     <Chip
                       key={c.id}
                       active={contentTypeId === c.id}
-                      onClick={() => {
-                        setContentTypeId(c.id);
-                        setValues({});
-                      }}
+                      onClick={() => setContentTypeId(c.id)}
                     >
                       {c.label}
                     </Chip>
@@ -187,17 +211,13 @@ export function GeneratePage() {
                           id={id}
                           placeholder={field.placeholder}
                           value={values[field.key] ?? ""}
-                          onChange={(e) =>
-                            setValues((v) => ({ ...v, [field.key]: e.target.value }))
-                          }
+                          onChange={(e) => setField(field.key, e.target.value)}
                         />
                       ) : field.type === "select" ? (
                         <Select
                           id={id}
                           value={values[field.key] ?? field.options?.[0]?.value ?? ""}
-                          onChange={(e) =>
-                            setValues((v) => ({ ...v, [field.key]: e.target.value }))
-                          }
+                          onChange={(e) => setField(field.key, e.target.value)}
                         >
                           {field.options?.map((o) => (
                             <option key={o.value} value={o.value}>
@@ -211,9 +231,7 @@ export function GeneratePage() {
                           type={field.type}
                           placeholder={field.placeholder}
                           value={values[field.key] ?? ""}
-                          onChange={(e) =>
-                            setValues((v) => ({ ...v, [field.key]: e.target.value }))
-                          }
+                          onChange={(e) => setField(field.key, e.target.value)}
                         />
                       )
                     }
@@ -225,6 +243,7 @@ export function GeneratePage() {
             ) : (
               <Field
                 label={`Inhalt für ${formatLabel(selection.format)}`}
+                hint={otherHint?.hint}
                 error={error ?? undefined}
               >
                 {(id) => (
@@ -232,7 +251,9 @@ export function GeneratePage() {
                     id={id}
                     value={otherText}
                     onChange={(e) => setOtherText(e.target.value)}
-                    placeholder="Inhalt eingeben …"
+                    placeholder={otherHint?.placeholder ?? "Inhalt eingeben …"}
+                    inputMode={otherHint?.numeric ? "numeric" : undefined}
+                    aria-invalid={error ? true : undefined}
                   />
                 )}
               </Field>
@@ -240,7 +261,16 @@ export function GeneratePage() {
           </div>
 
           <div className="space-y-4">
-            <Preview svg={svg} error={selection.kind === "qr" ? error : null} />
+            <Preview
+              svg={svg}
+              error={
+                selection.kind === "qr"
+                  ? error
+                  : error
+                    ? "Keine Vorschau — bitte die Eingabe prüfen."
+                    : null
+              }
+            />
             {svg ? (
               <>
                 <div className="flex flex-wrap gap-2">
@@ -254,10 +284,15 @@ export function GeneratePage() {
                     PDF
                   </Button>
                   <Button variant="ghost" onClick={onSave} disabled={saved}>
-                    {saved ? <Check size={16} aria-hidden /> : null}{" "}
-                    {saved ? "Gespeichert" : "Speichern"}
+                    {saved ? <Check size={16} aria-hidden /> : <Bookmark size={16} aria-hidden />}{" "}
+                    {saved ? "Im Verlauf gespeichert" : "Im Verlauf speichern"}
                   </Button>
                 </div>
+                {exportError ? (
+                  <p role="alert" className="text-sm text-danger">
+                    {exportError}
+                  </p>
+                ) : null}
                 <ul className="space-y-1 text-xs text-fg-muted">
                   {PRINT_HINTS.map((hint) => (
                     <li key={hint}>• {hint}</li>

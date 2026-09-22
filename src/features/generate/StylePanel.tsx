@@ -46,11 +46,18 @@ export function StylePanel({ value, onChange }: StylePanelProps) {
   const [open, setOpen] = useState(false);
   // ECC level chosen before a logo forced it to H, restored on logo removal.
   const eccBeforeLogo = useRef<EccLevel | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const patch = (next: Partial<GeneratorStyle>) => onChange({ ...value, ...next });
 
   const onLogoFile = (file: File | undefined) => {
     if (!file) return;
+    setLogoError(null);
+    if (!file.type.startsWith("image/")) {
+      setLogoError("Bitte eine Bilddatei wählen.");
+      return;
+    }
     const reader = new FileReader();
+    reader.onerror = () => setLogoError("Logo konnte nicht gelesen werden.");
     reader.onload = () => {
       if (!value.logo) eccBeforeLogo.current = value.ecc;
       patch({
@@ -206,7 +213,11 @@ export function StylePanel({ value, onChange }: StylePanelProps) {
             </div>
           ) : null}
 
-          <Field label="Logo (optional)" hint="Bei Logo wird Fehlerkorrektur H gesetzt.">
+          <Field
+            label="Logo (optional)"
+            hint="Bei Logo wird Fehlerkorrektur H gesetzt."
+            error={logoError ?? undefined}
+          >
             {(id) => (
               <div className="flex items-center gap-2">
                 <Input

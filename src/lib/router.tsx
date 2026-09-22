@@ -1,9 +1,11 @@
 import { createBrowserRouter } from "react-router-dom";
+import { NotFoundPage, RouteError } from "../features/errors/RouteError.tsx";
 import { ROUTES } from "./routes.ts";
 
 export const router = createBrowserRouter([
   {
     path: ROUTES.scan,
+    errorElement: <RouteError />,
     lazy: async () => {
       const { AppLayout } = await import("../App.tsx");
       return { Component: AppLayout };
@@ -30,6 +32,7 @@ export const router = createBrowserRouter([
           return { Component: HistoryPage };
         },
       },
+      { path: "*", Component: NotFoundPage },
     ],
   },
 ]);

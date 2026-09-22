@@ -200,6 +200,10 @@ export function buildBitcoin({ address, amount, label, message }: BitcoinInput):
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function isBlank(value: unknown): boolean {
+  return value == null || (typeof value === "string" && value.trim().length === 0);
+}
+
 export function validate(type: PayloadType, value: Record<string, unknown>): ValidationResult {
   switch (type) {
     case "url":
@@ -224,8 +228,9 @@ export function validate(type: PayloadType, value: Record<string, unknown>): Val
         ? { ok: true }
         : { ok: false, error: "Bitte eine gültige Telefonnummer eingeben." };
     case "geo": {
-      const lat = Number(value.lat);
-      const lon = Number(value.lon);
+      // Number("") is 0 — treat blank fields as missing, not as the equator.
+      const lat = isBlank(value.lat) ? Number.NaN : Number(value.lat);
+      const lon = isBlank(value.lon) ? Number.NaN : Number(value.lon);
       if (Number.isNaN(lat) || lat < -90 || lat > 90) {
         return { ok: false, error: "Breitengrad muss zwischen -90 und 90 liegen." };
       }
@@ -239,10 +244,19 @@ export function validate(type: PayloadType, value: Record<string, unknown>): Val
       return (value.firstName as string)?.length || (value.lastName as string)?.length
         ? { ok: true }
         : { ok: false, error: "Bitte mindestens einen Namen eingeben." };
-    case "event":
-      return typeof value.summary === "string" && value.summary.length > 0 && value.start != null
-        ? { ok: true }
-        : { ok: false, error: "Titel und Startzeitpunkt sind erforderlich." };
+    case "event": {
+      if (isBlank(value.summary) || isBlank(value.start)) {
+        return { ok: false, error: "Titel und Startzeitpunkt sind erforderlich." };
+      }
+      const start = new Date(value.start as string).getTime();
+      if (Number.isNaN(start)) return { ok: false, error: "Ungültiger Startzeitpunkt." };
+      if (!isBlank(value.end)) {
+        const end = new Date(value.end as string).getTime();
+        if (Number.isNaN(end)) return { ok: false, error: "Ungültiger Endzeitpunkt." };
+        if (end < start) return { ok: false, error: "Das Ende liegt vor dem Beginn." };
+      }
+      return { ok: true };
+    }
     case "bitcoin":
       return typeof value.address === "string" && value.address.trim().length > 0
         ? { ok: true }

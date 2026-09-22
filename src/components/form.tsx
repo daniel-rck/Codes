@@ -2,6 +2,7 @@
  * Small form primitives (inputs, selects, fields) styled with the app's design
  * tokens. Complements the web-base UI primitives without modifying them.
  */
+import { ChevronDown } from "lucide-react";
 import {
   type InputHTMLAttributes,
   type ReactNode,
@@ -53,9 +54,16 @@ export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLText
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={cn(FIELD_BASE, "appearance-none", className)} {...rest}>
-      {children}
-    </select>
+    <div className="relative">
+      <select className={cn(FIELD_BASE, "appearance-none pr-9", className)} {...rest}>
+        {children}
+      </select>
+      <ChevronDown
+        size={16}
+        aria-hidden
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-muted"
+      />
+    </div>
   );
 }
 
@@ -73,6 +81,7 @@ export function Chip({ active, onClick, children }: ChipProps) {
       aria-pressed={active}
       className={cn(
         "rounded-full px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2",
         active
           ? "bg-accent-600 text-white"
           : "bg-surface-muted text-fg-muted hover:bg-surface-sunken border border-border",
@@ -96,6 +105,7 @@ export function Switch({ checked, onChange, label }: SwitchProps) {
         className={cn(
           "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
           checked ? "bg-accent-600" : "bg-surface-sunken border border-border",
+          "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-500 has-[:focus-visible]:ring-offset-2",
         )}
       >
         <input
