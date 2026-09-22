@@ -94,7 +94,6 @@ export function ScanPage() {
 
       <div className="space-y-4">
         <div className="relative mx-auto aspect-square w-full max-w-md overflow-hidden rounded-xl bg-black">
-          {/* biome-ignore lint/a11y/useMediaCaption: live camera preview has no captions */}
           <video
             ref={videoRef}
             playsInline
