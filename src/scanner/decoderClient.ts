@@ -28,20 +28,46 @@ export function warmUpDecoder(): void {
   getDecoderWorker().postMessage(request);
 }
 
-/** One-shot request → response, matched by id (the worker is shared). */
+/**
+ * Upper bound for a one-shot decode. Generous: a large photo on a slow device
+ * can take a while, and the first request may queue behind the wasm cold start.
+ */
+const ONE_SHOT_TIMEOUT_MS = 20_000;
+
+/**
+ * One-shot request → response, matched by id (the worker is shared). Rejects
+ * instead of hanging forever when the worker fails to load or never answers.
+ */
 export function decodeViaWorker(
   request: DecodeRequest,
   transfer: Transferable[] = [],
+  timeoutMs = ONE_SHOT_TIMEOUT_MS,
 ): Promise<DecodeHit[]> {
   const target = getDecoderWorker();
   return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      target.removeEventListener("message", onMessage);
+      target.removeEventListener("error", onFailure);
+      target.removeEventListener("messageerror", onFailure);
+    };
     const onMessage = (event: MessageEvent<DecodeResponse>) => {
       if (event.data.id !== request.id) return;
-      target.removeEventListener("message", onMessage);
+      cleanup();
       if (event.data.ok) resolve(event.data.results);
       else reject(new Error(event.data.error));
     };
+    const onFailure = () => {
+      cleanup();
+      reject(new Error("Decoder konnte nicht geladen werden."));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Decoder antwortet nicht."));
+    }, timeoutMs);
     target.addEventListener("message", onMessage);
+    target.addEventListener("error", onFailure);
+    target.addEventListener("messageerror", onFailure);
     target.postMessage(request, transfer);
   });
 }

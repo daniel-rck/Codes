@@ -138,6 +138,23 @@ describe("validation", () => {
     expect(validate("geo", { lat: 99, lon: 0 }).ok).toBe(false);
     expect(validate("geo", { lat: 48, lon: 11 }).ok).toBe(true);
   });
+  it("treats blank geo fields as missing rather than 0", () => {
+    expect(validate("geo", { lat: "", lon: "" }).ok).toBe(false);
+    expect(validate("geo", { lat: "48.1", lon: " " }).ok).toBe(false);
+    expect(validate("geo", { lat: "0", lon: "0" }).ok).toBe(true);
+  });
+  it("requires a parseable event start and an end not before it", () => {
+    expect(validate("event", { summary: "Meet", start: "" }).ok).toBe(false);
+    expect(validate("event", { summary: "", start: "2026-01-01T09:00" }).ok).toBe(false);
+    expect(validate("event", { summary: "Meet", start: "kaputt" }).ok).toBe(false);
+    expect(validate("event", { summary: "Meet", start: "2026-01-01T09:00" }).ok).toBe(true);
+    expect(
+      validate("event", { summary: "Meet", start: "2026-01-01T09:00", end: "2026-01-01T08:00" }).ok,
+    ).toBe(false);
+    expect(
+      validate("event", { summary: "Meet", start: "2026-01-01T09:00", end: "2026-01-01T10:00" }).ok,
+    ).toBe(true);
+  });
   it("requires a name for contact cards", () => {
     expect(validate("vcard", {}).ok).toBe(false);
     expect(validate("vcard", { firstName: "Jane" }).ok).toBe(true);

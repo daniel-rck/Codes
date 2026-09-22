@@ -9,19 +9,19 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { addScan } from "../../db/history.ts";
-import { Button, PageHeader } from "../../lib/ui/index.ts";
+import { Button, buttonClass, PageHeader, Spinner } from "../../lib/ui/index.ts";
 import { decodeImageFile } from "../../scanner/decodeImage.ts";
 import { warmUpDecoder } from "../../scanner/decoderClient.ts";
 import { type ScanHit, startScanLoop } from "../../scanner/scanLoop.ts";
 import { useCamera } from "../../scanner/useCamera.ts";
+import { toHref } from "../../shared/links.ts";
 
-/** Absolute href for openable scan results, or null when not a link. */
-function toHref(text: string): string | null {
-  if (/^(https?|mailto|tel|geo|bitcoin):/i.test(text)) return text;
-  // A bare "www.…" would resolve relative to the app origin — make it absolute.
-  if (/^www\./i.test(text)) return `https://${text}`;
-  return null;
-}
+/**
+ * After "Weiter scannen" the code that was just read is usually still in
+ * frame — ignore it for a moment so the sheet doesn't pop right back up and
+ * the history doesn't fill with duplicates.
+ */
+const RESCAN_IGNORE_MS = 3000;
 
 export function ScanPage() {
   const camera = useCamera();
@@ -30,6 +30,8 @@ export function ScanPage() {
   const [result, setResult] = useState<ScanHit | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [decodingImage, setDecodingImage] = useState(false);
+  const ignoreRef = useRef<{ text: string; until: number } | null>(null);
 
   const stopLoop = useCallback(() => {
     loopRef.current?.stop();
@@ -41,9 +43,30 @@ export function ScanPage() {
     warmUpDecoder();
   }, []);
 
+  // Start the camera right away when access was granted before — asking for a
+  // click every visit is needless friction. Without a prior grant we wait for
+  // the button so the permission prompt doesn't appear out of nowhere.
+  const { start: startCamera } = camera;
+  useEffect(() => {
+    let cancelled = false;
+    navigator.permissions
+      ?.query({ name: "camera" as PermissionName })
+      .then((status) => {
+        if (!cancelled && status.state === "granted") void startCamera();
+      })
+      .catch(() => undefined); // "camera" isn't a queryable permission everywhere.
+    return () => {
+      cancelled = true;
+    };
+  }, [startCamera]);
+
   const handleHit = useCallback(
     (hit: ScanHit) => {
+      const ignore = ignoreRef.current;
+      if (ignore && ignore.text === hit.text && Date.now() < ignore.until) return;
+      ignoreRef.current = null;
       stopLoop();
+      setScanError(null);
       setResult(hit);
       navigator.vibrate?.(80);
       void addScan(hit.text, hit.format);
@@ -70,10 +93,12 @@ export function ScanPage() {
   const onPickImage = useCallback(async (file: File | undefined) => {
     if (!file) return;
     setImageError(null);
+    setDecodingImage(true);
     try {
       const hits = await decodeImageFile(file);
       const first = hits[0];
       if (first) {
+        setScanError(null);
         setResult(first);
         void addScan(first.text, first.format);
       } else {
@@ -81,11 +106,16 @@ export function ScanPage() {
       }
     } catch {
       setImageError("Bild konnte nicht gelesen werden.");
+    } finally {
+      setDecodingImage(false);
     }
   }, []);
 
   const rescan = useCallback(() => {
-    setResult(null);
+    setResult((current) => {
+      if (current) ignoreRef.current = { text: current.text, until: Date.now() + RESCAN_IGNORE_MS };
+      return null;
+    });
   }, []);
 
   return (
@@ -94,7 +124,6 @@ export function ScanPage() {
 
       <div className="space-y-4">
         <div className="relative mx-auto aspect-square w-full max-w-md overflow-hidden rounded-xl bg-black">
-          {/* biome-ignore lint/a11y/useMediaCaption: live camera preview has no captions */}
           <video
             ref={videoRef}
             playsInline
@@ -132,20 +161,43 @@ export function ScanPage() {
             </Button>
           ) : (
             <Button onClick={() => void camera.start()} disabled={camera.starting}>
-              <Camera size={16} aria-hidden /> Kamera starten
+              {camera.starting ? (
+                <Spinner size="sm" label="Kamera startet …" className="text-white" />
+              ) : (
+                <Camera size={16} aria-hidden />
+              )}{" "}
+              {camera.starting ? "Kamera startet …" : "Kamera starten"}
             </Button>
           )}
 
-          <label className="inline-flex">
+          <label
+            className={buttonClass(
+              "secondary",
+              "md",
+              `cursor-pointer has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-500 has-[:focus-visible]:ring-offset-2 ${decodingImage ? "pointer-events-none opacity-60" : ""}`,
+            )}
+          >
             <input
               type="file"
               accept="image/*"
               className="sr-only"
-              onChange={(e) => void onPickImage(e.target.files?.[0])}
+              disabled={decodingImage}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Reset so picking the same file again still fires `change`.
+                e.target.value = "";
+                void onPickImage(file);
+              }}
             />
-            <span className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border bg-surface-muted px-4 text-sm font-medium hover:bg-surface-sunken">
-              <ImageIcon size={16} aria-hidden /> Aus Bild
-            </span>
+            {decodingImage ? (
+              <>
+                <Spinner size="sm" label="Bild wird gelesen …" /> Bild wird gelesen …
+              </>
+            ) : (
+              <>
+                <ImageIcon size={16} aria-hidden /> Aus Bild
+              </>
+            )}
           </label>
 
           {camera.devices.length > 1 && camera.stream ? (
@@ -164,9 +216,9 @@ export function ScanPage() {
           ) : null}
         </div>
 
-        {(imageError ?? scanError) ? (
-          <p className="text-center text-sm text-danger">{imageError ?? scanError}</p>
-        ) : null}
+        <p role="alert" className="min-h-5 text-center text-sm text-danger">
+          {imageError ?? scanError ?? ""}
+        </p>
       </div>
 
       {result ? <ResultSheet hit={result} onClose={rescan} /> : null}
@@ -175,44 +227,73 @@ export function ScanPage() {
 }
 
 function ResultSheet({ hit, onClose }: { hit: ScanHit; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const href = toHref(hit.text);
+  const canShare = typeof navigator !== "undefined" && "share" in navigator;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (copyState === "idle") return;
+    const t = setTimeout(() => setCopyState("idle"), 2000);
+    return () => clearTimeout(t);
+  }, [copyState]);
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(hit.text);
-      setCopied(true);
+      setCopyState("copied");
     } catch {
-      setCopied(false);
+      setCopyState("failed");
     }
   };
 
   const share = async () => {
     try {
-      await navigator.share?.({ text: hit.text });
+      await navigator.share({ text: hit.text });
     } catch {
       // user cancelled or unsupported — no-op
     }
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface p-4 pb-20 shadow-lg md:bottom-4 md:left-1/2 md:max-w-md md:-translate-x-1/2 md:rounded-xl md:border md:pb-4">
+    <div
+      role="dialog"
+      aria-label="Scan-Ergebnis"
+      className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-border bg-surface p-4 shadow-lg md:bottom-4 md:left-1/2 md:max-w-md md:-translate-x-1/2 md:rounded-xl md:border"
+    >
       <div className="mb-2 text-xs font-medium uppercase tracking-wide text-accent-600">
         {hit.format}
       </div>
-      <p className="mb-4 break-words text-sm text-fg">{hit.text}</p>
+      <p className="mb-4 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-sm text-fg">
+        {hit.text}
+      </p>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={copy}>
-          <Copy size={16} aria-hidden /> {copied ? "Kopiert" : "Kopieren"}
+        <Button onClick={copy} aria-live="polite">
+          <Copy size={16} aria-hidden />{" "}
+          {copyState === "copied"
+            ? "Kopiert"
+            : copyState === "failed"
+              ? "Kopieren fehlgeschlagen"
+              : "Kopieren"}
         </Button>
         {href ? (
-          <a href={href} target="_blank" rel="noreferrer noopener" className="inline-flex">
-            <Button variant="secondary">
-              <ExternalLink size={16} aria-hidden /> Öffnen
-            </Button>
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={buttonClass("secondary")}
+          >
+            <ExternalLink size={16} aria-hidden /> Öffnen
           </a>
         ) : null}
-        {typeof navigator !== "undefined" && "share" in navigator ? (
+        {canShare ? (
           <Button variant="secondary" onClick={share}>
             <Share2 size={16} aria-hidden /> Teilen
           </Button>

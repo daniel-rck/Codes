@@ -30,11 +30,11 @@ export function AppShell({ title, logo, navItems, headerActions, children }: App
         <aside className="hidden md:flex w-56 shrink-0 border-r border-border bg-surface-muted">
           <AppNav items={navItems} variant="sidebar" />
         </aside>
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+        <main className="flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
           <div className="container mx-auto max-w-4xl px-4 py-6">{children}</div>
         </main>
       </div>
-      <div className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-surface">
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-20 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)]">
         <AppNav items={navItems} variant="bottom" />
       </div>
     </div>
